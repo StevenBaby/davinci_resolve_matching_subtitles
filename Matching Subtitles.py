@@ -49,7 +49,7 @@ header = header + '</h1></body></html>'
 # define the window UI layout
 win = disp.AddWindow({
     'ID': winID,
-    'Geometry': [100, 100, 600, 400],
+    # 'Geometry': [100, 100, 600, 400],
     'WindowTitle': "Resolve Matching Subtitles",
 },
     ui.VGroup({"ID": "root", }, [
@@ -70,6 +70,24 @@ win = disp.AddWindow({
         # ui.TextBox(),
     ]),
 )
+
+items = win.GetItems()
+
+subitems = timeline.GetItemListInTrack('subtitle', 1)
+contents = []
+frame = 0
+if subitems:
+    gens = []
+    for sub in subitems:
+        if sub.GetStart() > frame + framerate * 5:
+            contents.append(''.join([
+                var[2] for var in gens
+            ]))
+            gens = []
+            frame = sub.GetStart()
+        gens.append([sub.GetStart(), sub.GetEnd(), sub.GetName()])
+
+items[textID].Text = '\n'.join([var for var in contents if var])
 
 
 def match_line(gens, line, index=0):
