@@ -25,11 +25,16 @@ pip install srt
 
 1. 首先使用 Davinci 创建字幕，最大长度 1
 2. 然后 `Workspace` > `Script` > `Matching Subtitles`
-3. 将字幕输入文本框中
-4. 点击 Match
-5. 完成后，项目资源中会创建一个匹配好的字幕，文件名随机的 `.srt` 文件
-6. 手动创建一个字幕轨，托入即可
+3. 修改文本或将字幕输入到文本框中
+4. 选择生成方式：
+   1. 生成 srt 文件到媒体池
+   2. 生成 Text + 视频轨道（需要选择一个 Text+ 作为模板）
+5. 点击 Match
+6. 对于不同的生成方式：
+   1. 如果是字幕文件，项目资源中会创建一个匹配好的字幕，文件名为 `Subtitle` 文件，手动创建一个字幕轨，托入即可
+   2. 生成 Text + 视频轨道，会自动创建一个对应的视频轨道
 
 ## References
 
 - https://github.com/tmoroney/auto-subs
+- https://www.steakunderwater.com/wesuckless/viewtopic.php?t=1411&start=210

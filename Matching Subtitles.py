@@ -1,10 +1,11 @@
 import os
 import sys
+import re
 import traceback
 import datetime
 import tempfile
 
-__version__ = "0.0.2"
+__version__ = "0.1.0"
 
 
 def main():
@@ -16,19 +17,16 @@ def main():
             exec(compile(open(active_this, "rb").read(), active_this, 'exec'), dict(__file__=active_this))
         # print(active_this)
 
-    # import DaVinciResolveScript as dvr
-
-    # resolve = dvr.scriptapp("Resolve")
-
     fu = resolve.Fusion()
     ui = fu.UIManager
-    # disp = dvr.UIDispatcher(ui)
 
     disp = bmd.UIDispatcher(ui)
 
     winID = "com.blackmagicdesign.resolve.SubtitleMatching"   # should be unique for single instancing
     textID = "TextEdit"
     matchID = "Matching"
+    debugID = 'DebugID'
+    methodID = "MethodID"
 
     win = ui.FindWindow(winID)
     if win:
@@ -45,35 +43,74 @@ def main():
     logoPath = fu.MapPath(r"AllData:../Support/Developer/Workflow Integrations/Examples/SamplePlugin/img/logo.png")
     header = '<html><body><h1 style="vertical-align:middle;">'
     header = header + '<img src="' + logoPath + '"/>&nbsp;&nbsp;&nbsp;'
-    header = header + '<b>Resolve Matching Subtitles</b>'
+    header = header + f'<b>Resolve Matching Subtitles'
     header = header + '</h1></body></html>'
+
+    ui_list = [
+        ui.VGap(10),
+        ui.Label({'Text': header, 'Weight': 0.1}),
+        ui.VGap(10),
+        ui.TextEdit({
+            'ID': textID,
+            #  'TabStopWidth': 28,
+            'LineWrapMode': "NoWrap",
+            'AcceptRichText': False,
+            # Use python lexer for syntax highlighting; other options include lua, html, json, xml, markdown, cpp, glsl, etc...
+            'Lexer': "python",
+        }),
+        ui.VGap(5),
+        ui.Label({'Text': "Select Generate Method:", 'Weight': 0, 'Font': ui.Font({'PixelSize': 14})}),
+        ui.ComboBox({"ID": methodID, 'MaximumSize': [1000, 35], }),
+        ui.VGap(5),
+        ui.Label({'Text': "Text + Template:", 'Weight': 0, 'Font': ui.Font({'PixelSize': 14})}),
+        ui.ComboBox({"ID": "Template", 'MaximumSize': [1000, 35], }),
+        ui.VGap(5),
+        ui.Label({'ID': 'Message', 'Text': "", 'Weight': 0, 'Font': ui.Font({'PixelSize': 22, 'Bold': True})}),
+        ui.VGap(5),
+        ui.Button({'ID': matchID, 'Text': "Match", 'MinimumSize': [120, 35], 'MaximumSize': [1000, 35], }),
+    ]
 
     # define the window UI layout
     win = disp.AddWindow({
         'ID': winID,
         # 'Geometry': [100, 100, 600, 400],
-        'WindowTitle': "Resolve Matching Subtitles",
+        'WindowTitle': f"Resolve Matching Subtitles v{__version__}",
     },
-        ui.VGroup({"ID": "root", }, [
-            ui.VGap(10),
-            ui.Label({'Text': header, 'Weight': 0.1}),
-            ui.VGap(10),
-            ui.TextEdit({
-                'ID': textID,
-                #  'TabStopWidth': 28,
-                'LineWrapMode': "NoWrap",
-                'AcceptRichText': False,
-                # Use python lexer for syntax highlighting; other options include lua, html, json, xml, markdown, cpp, glsl, etc...
-                'Lexer': "python",
-            }),
-            ui.Label({'ID': 'Message', 'Text': "", 'Weight': 0, 'Font': ui.Font({'PixelSize': 22, 'Bold': True})}),
-            ui.VGap(10),
-            ui.Button({'ID': matchID, 'Text': "Match", 'MinimumSize': [120, 35], 'MaximumSize': [1000, 35], }),
-            # ui.TextBox(),
-        ]),
+        ui.VGroup({"ID": "root", }, ui_list),
     )
 
     items = win.GetItems()
+
+    items[methodID].AddItem("Subtitle File")
+    items[methodID].AddItem("Text+ Video Track")
+
+    mediaPoolItemsList = []
+
+    def recursiveSearch(folder):
+        clips = folder.GetClipList()
+        for item in clips:
+            itemType = item.GetClipProperty()["Type"]
+            if itemType == "Generator":
+                itemName = item.GetName()
+                clipName = item.GetClipProperty()['Clip Name']
+                items['Template'].AddItem(clipName)
+                if re.search('text|Text|title|Title|subtitle|Subtitle', itemName) or \
+                        re.search('text|Text|title|Title|subtitle|Subtitle', clipName):
+                    items['Template'].CurrentIndex = len(mediaPoolItemsList) - 1  # set default template to Text+
+                mediaPoolItemsList.append(item)
+
+        subfolders = folder.GetSubFolderList()
+        for subfolder in subfolders:
+            recursiveSearch(subfolder)
+        return
+
+    def searchMediaPool():
+        folder = mediapool.GetRootFolder()
+        items['Template'].Clear()
+        items['Template'].SetEnabled(False)
+        recursiveSearch(folder)
+
+    searchMediaPool()
 
     subitems = timeline.GetItemListInTrack('subtitle', 1)
     contents = []
@@ -81,15 +118,19 @@ def main():
     if subitems:
         gens = []
         for sub in subitems:
-            if sub.GetStart() > frame + framerate * 5:
+            if sub.GetStart() > frame + framerate * 2:
                 contents.append(''.join([
                     var[2] for var in gens
                 ]))
                 gens = []
                 frame = sub.GetStart()
             gens.append([sub.GetStart(), sub.GetEnd(), sub.GetName()])
+        contents.append(''.join([var[2] for var in gens]))
 
     items[textID].Text = '\n'.join([var for var in contents if var])
+
+    def show_message(msg):
+        items['Message'].Text = str(msg)
 
     def match_line(gens, line, index=0):
         from thefuzz import fuzz
@@ -113,9 +154,68 @@ def main():
 
         return end + 1, gens[index][0], gens[end][1], max_line
 
+    def generate_srt_file(subs):
+        import srt
+        data = []
+        for idx, (start, end, line) in enumerate(subs):
+            sub = srt.Subtitle(
+                index=idx,
+                start=datetime.timedelta(seconds=start / framerate),
+                end=datetime.timedelta(seconds=end / framerate),
+                content=line
+            )
+            data.append(sub)
+
+        result = srt.compose(data)
+        with tempfile.TemporaryDirectory() as tempdir:
+            filename = os.path.join(tempdir, f'Subtitle.srt')
+            with open(filename, 'w', encoding='utf8') as file:
+                file.write(result)
+
+            medias = mediapool.ImportMedia(filename)
+            if medias:
+                show_message("Subtitle match finished...")
+
+    def generate_text(subs):
+        # folder = mediapool.GetCurrentFolder()
+        if items['Template'].CurrentIndex < 0:
+            show_message("Please select or create a template before match...")
+            return
+
+        mediaPoolItem = mediaPoolItemsList[items['Template'].CurrentIndex]
+
+        timeline.AddTrack('video')
+        trackindex = timeline.GetTrackCount('video')
+
+        for start, end, line in subs:
+            newClip = {
+                "mediaPoolItem": mediaPoolItem,
+                "startFrame": 0,
+                "endFrame": end - start,
+                "trackIndex": trackindex,
+                "recordFrame": start,
+            }
+            mediapool.AppendToTimeline([newClip])
+
+        clipList = timeline.GetItemListInTrack('video', trackindex)
+        if clipList:
+            for idx, clip in enumerate(clipList):
+                clip.SetClipColor('Orange')
+
+                comp = clip.GetFusionCompByIndex(1)
+                if comp:
+                    toollist = list(comp.GetToolList().values())
+                    for tool in toollist:
+                        if tool.GetAttrs()["TOOLS_Name"] == 'Template':
+                            comp.SetActiveTool(tool)
+                            tool.SetInput('StyledText', subs[idx][2])
+                clip.SetClipColor('Teal')
+
+        show_message("Text video track created...")
+
     def match_subtitle():
         from thefuzz import fuzz
-        import srt
+
         items = win.GetItems()
 
         subitems = timeline.GetItemListInTrack('subtitle', 1)
@@ -135,30 +235,15 @@ def main():
         # print(lines)
 
         begin = 0
-        index = 0
         subs = []
         for line in lines:
             begin, start, end, max_line = match_line(gens, line, begin)
+            subs.append((start, end, line))
 
-            sub = srt.Subtitle(
-                index=index,
-                start=datetime.timedelta(seconds=start / framerate),
-                end=datetime.timedelta(seconds=end / framerate),
-                content=line
-            )
-            index += 1
-            subs.append(sub)
-            # print(sub)
-
-        result = srt.compose(subs)
-        with tempfile.TemporaryDirectory() as tempdir:
-            filename = os.path.join(tempdir, f'Subtitle_{datetime.datetime.now().strftime("%H%M%S")}.srt')
-            with open(filename, 'w', encoding='utf8') as file:
-                file.write(result)
-
-            medias = mediapool.ImportMedia(filename)
-            if medias:
-                items['Message'].Text = "Subtitle match finished..."
+        if items[methodID].CurrentIndex == 0:
+            generate_srt_file(subs)
+        else:
+            generate_text(subs)
 
     def OnMatch(ev):
         items = win.GetItems()
@@ -172,25 +257,39 @@ def main():
             items['Message'].Text = "Python environment error..."
             return
         except Exception as e:
-            print("Unknown error...")
-            items['Message'].Text = str(e)
+            traceback.print_exc()
+            show_message(e)
 
         try:
             match_subtitle()
-            # disp.ExitLoop()
         except Exception as e:
-            # print(e)
             traceback.print_exc()
-            items['Message'].Text = str(e)
+            show_message(e)
         finally:
             ...
 
     def OnClose(ev):
-        # saveSettings()
         disp.ExitLoop()
+
+    def OnMethodChanged(ev):
+        show_message("")
+        if items[methodID].CurrentIndex == 1:
+            items['Template'].SetEnabled(True)
+            if items['Template'].CurrentIndex < 0:
+                items[matchID].SetEnabled(False)
+                show_message("Please select or create a template before match...")
+            else:
+                items[matchID].SetEnabled(True)
+        else:
+            items['Template'].SetEnabled(False)
+
+    def OnTemplateChanged(ev):
+        show_message("")
 
     win.On[winID].Close = OnClose
     win.On[matchID].Clicked = OnMatch
+    win.On[methodID].CurrentIndexChanged = OnMethodChanged
+    win.On['Template'].CurrentIndexChanged = OnTemplateChanged
 
     win.Show()
     disp.RunLoop()
