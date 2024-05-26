@@ -14,7 +14,7 @@ Davinci 18 可以识别字幕，尽管挺准确的，但是还是有错误的地
 ```shell
 pip install thefuzz
 pip install srt
-pip install pypin
+pip install pypinyin
 ```
 
 或者创建 `davinci` 虚拟环境，再安装上面的包，可能更好一点。
