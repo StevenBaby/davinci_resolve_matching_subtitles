@@ -5,7 +5,7 @@ import traceback
 import datetime
 import tempfile
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 
 def main():
@@ -112,22 +112,23 @@ def main():
 
     searchMediaPool()
 
-    subitems = timeline.GetItemListInTrack('subtitle', 1)
-    contents = []
-    frame = 0
-    if subitems:
-        gens = []
-        for sub in subitems:
-            if sub.GetStart() > frame + framerate * 2:
-                contents.append(''.join([
-                    var[2] for var in gens
-                ]))
-                gens = []
-                frame = sub.GetStart()
-            gens.append([sub.GetStart(), sub.GetEnd(), sub.GetName()])
-        contents.append(''.join([var[2] for var in gens]))
+    if timeline:
+        subitems = timeline.GetItemListInTrack('subtitle', 1)
+        contents = []
+        frame = 0
+        if subitems:
+            gens = []
+            for sub in subitems:
+                if sub.GetStart() > frame + framerate * 2:
+                    contents.append(''.join([
+                        var[2] for var in gens
+                    ]))
+                    gens = []
+                    frame = sub.GetStart()
+                gens.append([sub.GetStart(), sub.GetEnd(), sub.GetName()])
+            contents.append(''.join([var[2] for var in gens]))
 
-    items[textID].Text = '\n'.join([var for var in contents if var])
+        items[textID].Text = '\n'.join([var for var in contents if var])
 
     def show_message(msg):
         items['Message'].Text = str(msg)
@@ -226,12 +227,15 @@ def main():
 
     def match_subtitle():
         from thefuzz import fuzz
+        if timeline is None:
+            show_message("Create subtitle from audio before matching...")
+            return
 
         items = win.GetItems()
 
         subitems = timeline.GetItemListInTrack('subtitle', 1)
         if not subitems:
-            items['Message'].Text = "This is not subtitle track..."
+            show_message("Create subtitle from audio before matching...")
             return
 
         gens = []
