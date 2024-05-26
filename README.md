@@ -23,6 +23,8 @@ pip install srt
 
 ## 使用
 
+相关视频：<https://www.bilibili.com/video/BV1ft421N7wu>
+
 1. 首先使用 Davinci 创建字幕，最大长度 1
 2. 然后 `Workspace` > `Script` > `Matching Subtitles`
 3. 修改文本或将字幕输入到文本框中
