@@ -5,7 +5,7 @@ import traceback
 import datetime
 import tempfile
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 
 def main():
@@ -132,28 +132,6 @@ def main():
     def show_message(msg):
         items['Message'].Text = str(msg)
 
-    def match_line(gens, line, index=0):
-        from thefuzz import fuzz
-
-        max_score = 0
-        max_line = ''
-        end = 0
-
-        cur = ''
-        # print(gens)
-        for e in range(index, len(gens)):
-            cur += gens[e][2]
-            if len(cur) + 1 < len(line):
-                continue
-
-            score = fuzz.ratio(cur, line)
-            if score > max_score:
-                max_score = score
-                max_line = cur
-                end = e
-
-        return end + 1, gens[index][0], gens[end][1], max_line
-
     def generate_srt_file(subs):
         import srt
         data = []
@@ -187,6 +165,7 @@ def main():
         timeline.AddTrack('video')
         trackindex = timeline.GetTrackCount('video')
 
+        show_message("Create Text + clips to video track...")
         for start, end, line in subs:
             newClip = {
                 "mediaPoolItem": mediaPoolItem,
@@ -197,6 +176,7 @@ def main():
             }
             mediapool.AppendToTimeline([newClip])
 
+        show_message("Set content to Text + clips...")
         clipList = timeline.GetItemListInTrack('video', trackindex)
         if clipList:
             for idx, clip in enumerate(clipList):
@@ -212,6 +192,37 @@ def main():
                 clip.SetClipColor('Teal')
 
         show_message("Text video track created...")
+
+    def match_line(gens, line, index=0):
+        from thefuzz import fuzz
+        from pypinyin import pinyin
+        import pypinyin
+
+        line_pinyin = ''.join([var[0] for var in pinyin(line, style=pypinyin.NORMAL)])
+
+        max_score = 0
+        max_line = ''
+        end = 0
+
+        cur = ''
+        # print(gens)
+        for e in range(index, len(gens)):
+            cur += gens[e][2]
+            if len(cur) + 1 < len(line):
+                continue
+
+            cur_pinyin = ''.join([var[0] for var in pinyin(cur, style=pypinyin.NORMAL)])
+            # print(cur_pinyin, line)
+
+            score = fuzz.ratio(cur_pinyin, line_pinyin)
+            if score > max_score:
+                max_score = score
+                max_line = cur
+                end = e
+
+        print(index, end)
+        print(gens[index], gens[end])
+        return end + 1, gens[index][0], gens[end][1], max_line
 
     def match_subtitle():
         from thefuzz import fuzz
@@ -236,9 +247,12 @@ def main():
 
         begin = 0
         subs = []
-        for line in lines:
-            begin, start, end, max_line = match_line(gens, line, begin)
-            subs.append((start, end, line))
+        total = len(lines)
+        for idx, line in enumerate(lines):
+            show_message(f"Subtitle matching {(idx + 1) * 100 / total:0.2f} % .")
+            if begin < len(gens):
+                begin, start, end, max_line = match_line(gens, line, begin)
+                subs.append((start, end, line))
 
         if items[methodID].CurrentIndex == 0:
             generate_srt_file(subs)
@@ -251,10 +265,12 @@ def main():
         try:
             from thefuzz import fuzz
             import srt
+            import pypinyin
         except ImportError:
             print("Python environment error...")
-
-            items['Message'].Text = "Python environment error..."
+            show_message(
+                'Please install python package (thefuzz, srt, pypinyin)'
+            )
             return
         except Exception as e:
             traceback.print_exc()
@@ -272,19 +288,19 @@ def main():
         disp.ExitLoop()
 
     def OnMethodChanged(ev):
-        show_message("")
         if items[methodID].CurrentIndex == 1:
             items['Template'].SetEnabled(True)
             if items['Template'].CurrentIndex < 0:
-                items[matchID].SetEnabled(False)
                 show_message("Please select or create a template before match...")
-            else:
-                items[matchID].SetEnabled(True)
         else:
             items['Template'].SetEnabled(False)
 
     def OnTemplateChanged(ev):
-        show_message("")
+        if items['Template'].CurrentIndex < 0 and items[methodID].CurrentIndex == 1:
+            items[matchID].SetEnabled(False)
+        else:
+            items[matchID].SetEnabled(True)
+            show_message("")
 
     win.On[winID].Close = OnClose
     win.On[matchID].Clicked = OnMatch
