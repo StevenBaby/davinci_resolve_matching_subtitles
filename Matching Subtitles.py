@@ -5,7 +5,7 @@ import traceback
 import datetime
 import tempfile
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 
 
 def main():
@@ -90,7 +90,8 @@ def main():
         clips = folder.GetClipList()
         for item in clips:
             itemType = item.GetClipProperty()["Type"]
-            if itemType == "Generator":
+
+            if itemType in ('Fusion Title', "Generator"):
                 itemName = item.GetName()
                 clipName = item.GetClipProperty()['Clip Name']
                 items['Template'].AddItem(clipName)
