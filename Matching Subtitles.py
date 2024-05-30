@@ -5,7 +5,7 @@ import traceback
 import datetime
 import tempfile
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"
 
 
 def main():
@@ -206,12 +206,18 @@ def main():
         max_line = ''
         end = 0
 
+        start = index - 5
+        if start < 0:
+            start = 0
+
         cur = ''
         # print(gens)
         for e in range(index, len(gens)):
             cur += gens[e][2]
-            if len(cur) + 1 < len(line):
+            if len(cur) + 5 < len(line):
                 continue
+            if len(cur) > len(line) + 5:
+                break
 
             cur_pinyin = ''.join([var[0] for var in pinyin(cur, style=pypinyin.NORMAL)])
             # print(cur_pinyin, line)
