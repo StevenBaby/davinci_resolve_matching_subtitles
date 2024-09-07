@@ -1,6 +1,6 @@
 # Davinci Resolve Matching Subtitles
 
-![](./screenshots/screenshot.jpg)
+![](./screenshots/screenshot.png)
 
 ## Motivation
 
