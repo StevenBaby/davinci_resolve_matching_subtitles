@@ -5,28 +5,22 @@ import traceback
 import datetime
 import tempfile
 
-__version__ = "0.2.3"
+__version__ = "0.3.0"
 
 
 def main():
-    workon = os.path.expandvars("%WORKON_HOME%")
-    if workon:
-        active_this = r'%WORKON_HOME%\davinci\Scripts\activate_this.py'
-        active_this = os.path.expandvars(active_this)
-        if os.path.exists(active_this):
-            exec(compile(open(active_this, "rb").read(), active_this, 'exec'), dict(__file__=active_this))
-        # print(active_this)
-
     fu = resolve.Fusion()
     ui = fu.UIManager
 
     disp = bmd.UIDispatcher(ui)
 
+    platform = sys.platform
     winID = "com.blackmagicdesign.resolve.SubtitleMatching"   # should be unique for single instancing
     textID = "TextEdit"
     matchID = "Matching"
     debugID = 'DebugID'
     methodID = "MethodID"
+    virtualenvID = "VIRTUALENV"
 
     win = ui.FindWindow(winID)
     if win:
@@ -46,10 +40,19 @@ def main():
     header = header + f'<b>Resolve Matching Subtitles'
     header = header + '</h1></body></html>'
 
+    environ_placeholder = r"%WORKON_HOME%\davinci\Scripts\activate_this.py"
+    if platform == "win32":
+        pass
+    elif platform in ("linux", "linux2"):
+        environ_placeholder = "$WORKON_HOME/davinci/bin/activate_this.py"
+    elif platform == "darwin":  # OSX
+        environ_placeholder = "$WORKON_HOME/davinci/bin/activate_this.py"
+
     ui_list = [
         ui.VGap(10),
         ui.Label({'Text': header, 'Weight': 0.1}),
         ui.VGap(10),
+        ui.Label({'Text': "Subtitles:", 'Weight': 0, 'Font': ui.Font({'PixelSize': 14})}),
         ui.TextEdit({
             'ID': textID,
             #  'TabStopWidth': 28,
@@ -58,15 +61,30 @@ def main():
             # Use python lexer for syntax highlighting; other options include lua, html, json, xml, markdown, cpp, glsl, etc...
             'Lexer': "python",
         }),
-        ui.VGap(5),
-        ui.Label({'Text': "Select Generate Method:", 'Weight': 0, 'Font': ui.Font({'PixelSize': 14})}),
-        ui.ComboBox({"ID": methodID, 'MaximumSize': [1000, 35], }),
-        ui.VGap(5),
-        ui.Label({'Text': "Text + Template:", 'Weight': 0, 'Font': ui.Font({'PixelSize': 14})}),
-        ui.ComboBox({"ID": "Template", 'MaximumSize': [1000, 35], }),
-        ui.VGap(5),
+        ui.VGroup({'Weight': 1, }, [
+            ui.VGap(5),
+            ui.Label({'Text': "Custom Python Virtual Environment:", 'Weight': 0, 'Font': ui.Font({'PixelSize': 14})}),
+            ui.LineEdit({
+                'ID': virtualenvID,
+                'LineWrapMode': "NoWrap",
+                'PlaceholderText': environ_placeholder,
+                'AcceptRichText': False,
+            }),
+        ]),
+
+        ui.VGroup({'Weight': 1, }, [
+            ui.VGap(5),
+            ui.Label({'Text': "Select Generate Method:", 'Weight': 0, 'Font': ui.Font({'PixelSize': 14})}),
+            ui.ComboBox({"ID": methodID, 'MaximumSize': [1000, 35], }),
+        ]),
+
+        ui.VGroup({'Weight': 1, }, [
+            ui.VGap(5),
+            ui.Label({'Text': "Text + Template:", 'Weight': 0, 'Font': ui.Font({'PixelSize': 14})}),
+            ui.ComboBox({"ID": "Template", 'MaximumSize': [1000, 35], }),
+        ]),
+
         ui.Label({'ID': 'Message', 'Text': "", 'Weight': 0, 'Font': ui.Font({'PixelSize': 22, 'Bold': True})}),
-        ui.VGap(5),
         ui.Button({'ID': matchID, 'Text': "Match", 'MinimumSize': [120, 35], 'MaximumSize': [1000, 35], }),
     ]
 
@@ -133,6 +151,54 @@ def main():
 
     def show_message(msg):
         items['Message'].Text = str(msg)
+
+    def activate_environ():
+        if platform not in {"win32", "linux", "linux2", "darwin"}:
+            show_message("Unknown Operating System...")
+            return False
+
+        activate_this = win.Find(virtualenvID).Text.strip()
+        if not activate_this:
+            activate_this = environ_placeholder
+        activate_this = os.path.expandvars(activate_this)
+
+        if not os.path.exists(activate_this):
+            show_message("invalid activate_this.py" + activate_this)
+            return False
+
+        with open(activate_this, "rb") as file:
+            exec(compile(file.read(), activate_this, 'exec'), dict(__file__=activate_this))
+
+    def try_import_requirements():
+        from thefuzz import fuzz
+        import srt
+        import pypinyin
+        return True
+
+    def try_activate_environ():
+        try:
+            try_import_requirements()
+            return True
+        except ImportError:
+            activate_environ()
+        except Exception as e:
+            traceback.print_exc()
+            show_message(e)
+            return False
+
+        try:
+            try_import_requirements()
+            return True
+        except ImportError:
+            print("Python environment error...")
+            show_message(
+                'Please install python package (thefuzz, srt, pypinyin)'
+            )
+            return False
+        except Exception as e:
+            traceback.print_exc()
+            show_message(e)
+            return False
 
     def generate_srt_file(subs):
         import srt
@@ -271,22 +337,12 @@ def main():
             generate_text(subs)
 
     def OnMatch(ev):
+        if not try_activate_environ():
+            return
+        show_message("activate environ success!!!")
+
         items = win.GetItems()
         items['Message'].Text = "Subtitle matching..."
-        try:
-            from thefuzz import fuzz
-            import srt
-            import pypinyin
-        except ImportError:
-            print("Python environment error...")
-            show_message(
-                'Please install python package (thefuzz, srt, pypinyin)'
-            )
-            return
-        except Exception as e:
-            traceback.print_exc()
-            show_message(e)
-
         try:
             match_subtitle()
         except Exception as e:
