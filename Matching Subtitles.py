@@ -261,42 +261,10 @@ def main():
 
         show_message("Text video track created...")
 
-    def match_line(gens, line, index=0):
-        from thefuzz import fuzz
+    def to_pinyin(text):
         from pypinyin import pinyin
         import pypinyin
-
-        line_pinyin = ''.join([var[0] for var in pinyin(line, style=pypinyin.NORMAL)])
-
-        max_score = 0
-        max_line = ''
-        end = 0
-
-        start = index - 5
-        if start < 0:
-            start = 0
-
-        cur = ''
-        # print(gens)
-        for e in range(index, len(gens)):
-            cur += gens[e][2]
-            if len(cur) + 5 < len(line):
-                continue
-            if len(cur) > len(line) + 5:
-                break
-
-            cur_pinyin = ''.join([var[0] for var in pinyin(cur, style=pypinyin.NORMAL)])
-            # print(cur_pinyin, line)
-
-            score = fuzz.ratio(cur_pinyin, line_pinyin)
-            if score > max_score:
-                max_score = score
-                max_line = cur
-                end = e
-
-        print(index, end)
-        print(gens[index], gens[end])
-        return end + 1, gens[index][0], gens[end][1], max_line
+        return ''.join([var[0] for var in pinyin(text, style=pypinyin.NORMAL)])
 
     def match_subtitle():
         from thefuzz import fuzz
@@ -311,6 +279,8 @@ def main():
             show_message("Create subtitle from audio before matching...")
             return
 
+        # Each ASR segment: [start, end, text]. Precompute pinyin once so the
+        # alignment loop never re-runs pinyin() on the same text.
         gens = []
         for sub in subitems:
             gens.append([sub.GetStart(), sub.GetEnd(), sub.GetName()])
@@ -318,23 +288,103 @@ def main():
             items['Message'].Text = "This is not subtitles..."
             return
 
+        gens_pinyin = [to_pinyin(g[2]) for g in gens]
+
         script = win.Find(textID).PlainText
         lines = [var for var in script.splitlines() if var]
-        # print(lines)
+        lines_pinyin = [to_pinyin(line) for line in lines]
 
-        begin = 0
+        # Score how well a run of ASR segments [s..e] matches one correct line.
+        # partial_ratio finds the line as a sub-run even when the ASR dropped or
+        # added a few characters; ratio penalizes wrong characters; the length
+        # factor penalizes spanning far more/fewer segments than the line needs,
+        # so duplicates are not silently absorbed into a neighbouring line.
+        def window_score(s, e, line_pinyin):
+            cur = ''.join(gens_pinyin[s:e + 1])
+            if not cur or not line_pinyin:
+                return 0
+            pr = fuzz.partial_ratio(cur, line_pinyin)
+            r = fuzz.ratio(cur, line_pinyin)
+            short = min(len(cur), len(line_pinyin))
+            long = max(len(cur), len(line_pinyin))
+            length_factor = short / long if long else 0
+            return (0.7 * pr + 0.3 * r) * (0.4 + 0.6 * length_factor)
+
+        # Global sequence alignment (Needleman-Wunsch style) over the ordered
+        # correct lines and the ordered ASR segments. Each line maps to a
+        # contiguous run of segments; extra/duplicate ASR segments may be skipped
+        # (with a gap penalty) so they don't drag later subtitles forward.
+        n = len(lines)
+        m = len(gens)
+        MAX_SPAN = 40   # cap segments a single line may span, keeps DP O(n*m*span)
+        GAP = -15       # penalty for skipping one extra ASR segment
+
+        NEG = float('-inf')
+        # dp[i][j]: best score aligning the first i lines with the first j
+        # segments. prev stores ('match', i-1, run_start) or ('skip', i, j-1).
+        dp = [[NEG] * (m + 1) for _ in range(n + 1)]
+        prev = [[None] * (m + 1) for _ in range(n + 1)]
+        dp[0][0] = 0  # no leading skips: the first line starts at segment 0
+
+        for i in range(1, n + 1):
+            line_pinyin = lines_pinyin[i - 1]
+            for j in range(1, m + 1):
+                # Option 1: line i-1 matches a run [s .. j-1].
+                best_val = NEG
+                best_s = -1
+                min_s = max(0, j - MAX_SPAN)
+                for s in range(j - 1, min_s - 1, -1):
+                    if dp[i - 1][s] == NEG:
+                        continue
+                    val = dp[i - 1][s] + window_score(s, j - 1, line_pinyin)
+                    if val > best_val:
+                        best_val = val
+                        best_s = s
+                # Option 2: skip segment j-1 (ASR extra/duplicate). A match wins ties.
+                skip_val = dp[i][j - 1] + GAP if dp[i][j - 1] != NEG else NEG
+                if best_val >= skip_val:
+                    dp[i][j] = best_val
+                    prev[i][j] = ('match', i - 1, best_s)
+                else:
+                    dp[i][j] = skip_val
+                    prev[i][j] = ('skip', i, j - 1)
+
+        # Backtrack the best path; trailing unaligned segments are ignored.
+        best_j = max(range(0, m + 1), key=lambda j: dp[n][j])
+        if dp[n][best_j] == NEG:
+            show_message("Subtitle matching failed...")
+            return
+
+        alignment = []  # list of (seg_start_index, seg_end_index, line_index)
+        i, j = n, best_j
+        while i > 0 and j > 0:
+            action, pi, pj = prev[i][j]
+            if action == 'match':
+                alignment.append((pj, j - 1, i - 1))
+                i, j = pi, pj
+            else:  # 'skip'
+                i, j = pi, pj
+        alignment.reverse()
+
         subs = []
-        total = len(lines)
-        for idx, line in enumerate(lines):
-            show_message(f"Subtitle matching {(idx + 1) * 100 / total:0.2f} % .")
-            if begin < len(gens):
-                begin, start, end, max_line = match_line(gens, line, begin)
-                subs.append((start, end, line))
+        low_conf = 0
+        for seg_start, seg_end, line_idx in alignment:
+            line = lines[line_idx]
+            score = window_score(seg_start, seg_end, lines_pinyin[line_idx])
+            if score < 40:
+                low_conf += 1
+                print(f"Low confidence match ({score:0.1f}): {line!r}")
+            start = gens[seg_start][0]
+            end = gens[seg_end][1]
+            subs.append((start, end, line))
 
         if items[methodID].CurrentIndex == 0:
             generate_srt_file(subs)
         else:
             generate_text(subs)
+
+        if low_conf:
+            show_message(f"Subtitle match finished ({low_conf} low-confidence lines, see console).")
 
     def OnMatch(ev):
         if not try_activate_environ():
